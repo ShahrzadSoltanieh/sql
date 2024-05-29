@@ -17,8 +17,11 @@ The `||` values concatenate the columns into strings.
 Edit the appropriate columns -- you're making two edits -- and the NULL rows will be fixed. 
 All the other rows will remain the same.) */
 
-
-
+SELECT product_name || ', '||
+(COALESCE(product_size, '')) ||
+' (' || (COALESCE(product_qty_type, 'unit')) || ')'
+AS detailed_products_list
+FROM PRODUCT;
 
 --Windowed Functions
 /* 1. Write a query that selects from the customer_purchases table and numbers each customer’s  
@@ -30,17 +33,45 @@ each new market date for each customer, or select only the unique market dates p
 (without purchase details) and number those visits. 
 HINT: One of these approaches uses ROW_NUMBER() and one uses DENSE_RANK(). */
 
+--ROW_NUMBER
+SELECT customer_id,
+market_date, transaction_time, 
+ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY market_date, transaction_time) AS customer_visit_rank
+FROM customer_purchases;
+
+--DENSE_RANK
+SELECT customer_id,
+market_date,
+DENSE_RANK() OVER (PARTITION BY customer_id ORDER BY market_date) AS customer_visit_rank
+FROM (SELECT DISTINCT market_date, customer_id FROM customer_purchases);
 
 /* 2. Reverse the numbering of the query from a part so each customer’s most recent visit is labeled 1, 
 then write another query that uses this one as a subquery (or temp table) and filters the results to 
 only the customer’s most recent visit. */
 
+SELECT customer_id,
+market_date,
+transaction_time,
+ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY market_date DESC, transaction_time DESC) AS customer_visit_rank_desc
+FROM customer_purchases;
+
+SELECT 
+* FROM(
+SELECT cp.customer_id,
+cp.market_date,
+ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY market_date DESC, transaction_time DESC) AS customer_recent_visit_rank
+FROM customer_purchases cp
+ORDER BY cp.customer_id) x
+WHERE x.customer_recent_visit_rank=1;
 
 /* 3. Using a COUNT() window function, include a value along with each row of the 
 customer_purchases table that indicates how many different times that customer has purchased that product_id. */
 
-
-
+SELECT DISTINCT customer_id,
+product_id,
+COUNT(*) OVER(PARTITION BY customer_id, product_id) AS total_product_purchased
+FROM customer_purchases
+ORDER BY customer_id;
 
 -- String manipulations
 /* 1. Some product names in the product table have descriptions like "Jar" or "Organic". 
@@ -54,11 +85,24 @@ Remove any trailing or leading whitespaces. Don't just use a case statement for 
 
 Hint: you might need to use INSTR(product_name,'-') to find the hyphens. INSTR will help split the column. */
 
-
+SELECT 
+product_name,
+CASE 
+WHEN INSTR(product_name, '-') > 0 THEN TRIM(SUBSTR(product_name, INSTR(product_name, '-') + 1))
+ELSE NULL
+END AS description
+FROM product;
 
 /* 2. Filter the query to show any product_size value that contain a number with REGEXP. */
 
-
+SELECT 
+product_name, product_size,
+CASE 
+WHEN INSTR(product_name, '-') > 0 THEN TRIM(SUBSTR(product_name, INSTR(product_name, '-') + 1))
+ELSE NULL
+END AS description
+FROM product
+WHERE product_size REGEXP '\d';
 
 -- UNION
 /* 1. Using a UNION, write a query that displays the market dates with the highest and lowest total sales.
@@ -70,6 +114,33 @@ HINT: There are a possibly a few ways to do this query, but if you're struggling
 3) Query the second temp table twice, once for the best day, once for the worst day, 
 with a UNION binding them. */
 
+--1)
+DROP TABLE IF EXISTS total_sales;
+CREATE TEMP TABLE total_sales AS
+SELECT *, quantity*cost_to_customer_per_qty AS sales
+FROM customer_purchases
+GROUP BY market_date;
 
+--2)
+DROP TABLE IF EXISTS sales_by_market_date_ranked;
+CREATE TEMP TABLE sales_by_market_date_ranked AS
+SELECT *,
+RANK() OVER (ORDER BY sales) AS sales_ranked
+FROM sales_by_market_date;
+
+--3)
+SELECT market_date, sales, sales_ranked, day_type
+FROM
+(SELECT *, "worst day" as day_type,
+ROW_NUMBER() OVER (ORDER BY sales_ranked) AS min_sales
+FROM sales_by_market_date_ranked) x
+WHERE x.min_sales=1
+UNION
+SELECT market_date, sales, sales_ranked, day_type
+FROM
+(SELECT *, "best day" as day_type,
+ROW_NUMBER() OVER (ORDER BY sales_ranked DESC) AS max_sales
+FROM sales_by_market_date_ranked) x
+WHERE x.max_sales=1;
 
 
